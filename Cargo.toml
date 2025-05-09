@@ -1,0 +1,8 @@
+[package]
+name = "pairsnp-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+roaring = "0.10.12"
+seq_io = "0.3.4"
