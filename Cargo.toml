@@ -1,7 +1,10 @@
 [package]
 name = "pairsnp-rs"
+authors = ["Abhirath Anand <theabhirathanand@gmail.com>"]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+readme = "README.md"
 
 [dependencies]
 roaring = "0.10.12"
