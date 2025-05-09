@@ -2,7 +2,7 @@ use seq_io::fasta::{Reader, Record};
 use roaring::RoaringBitmap;
 
 fn main() {
-    let fasta_file = "data/good.fasta";
+    let fasta_file = "data/ambig.fasta";
     let mut reader = Reader::from_path(fasta_file).unwrap();
 
     let mut seq_length = 0;
@@ -29,7 +29,7 @@ fn main() {
         let mut t_sites = RoaringBitmap::new();
 
         for (i, c) in record.seq().iter().enumerate() {
-            match c {
+            match c.to_ascii_uppercase() {
                 b'A' => a_sites.insert(i as u32),
                 b'C' => c_sites.insert(i as u32),
                 b'G' => g_sites.insert(i as u32),
