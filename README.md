@@ -12,3 +12,11 @@ The input file should be a multiple sequence alignment in fasta format.
 ## Output
 
 The output will be a matrix of pairwise SNP distances.
+
+## Usage
+
+```bash
+pairsnp-rs -i input.fasta -o output.txt
+```
+
+For more information, run `pairsnp-rs --help`.

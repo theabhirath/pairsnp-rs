@@ -1,10 +1,28 @@
+use std::fs::File;
+use std::io::BufWriter;
+use std::io::prelude::*;
+use clap::Parser;
+
 use seq_io::fasta::{Reader, Record};
 use roaring::RoaringBitmap;
 
-fn main() {
-    let fasta_file = "data/ambig.fasta";
-    let mut reader = Reader::from_path(fasta_file).unwrap();
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    /// input FASTA file containing multiple sequence alignment
+    #[clap(short, long)]
+    input: std::path::PathBuf,
+    /// output file to write pairwise SNP distance matrix
+    #[clap(short, long)]
+    output: std::path::PathBuf,
+}
 
+fn main() -> Result<(), std::io::Error> {
+    let args = Cli::parse();
+    // read input FASTA file
+    let mut reader = Reader::from_path(args.input)?;
+
+    // initialize variables
     let mut seq_length = 0;
     let mut nseqs = 0;
     let mut ids = Vec::new();
@@ -13,6 +31,7 @@ fn main() {
     let mut g_snps = Vec::new();
     let mut t_snps = Vec::new();
 
+    // iterate over records in input FASTA file
     for record in reader.records() {
         let record = record.unwrap();
         let length = record.seq().len() as u32;
@@ -21,70 +40,74 @@ fn main() {
         } else if length != seq_length {
             panic!("Alignment is not consistent – all sequences must have the same length");
         }
+        // store sequence ID
         ids.push(record.id().unwrap().to_string());
 
+        // initialize bitmaps for each nucleotide
         let mut a_sites = RoaringBitmap::new();
         let mut c_sites = RoaringBitmap::new();
         let mut g_sites = RoaringBitmap::new();
         let mut t_sites = RoaringBitmap::new();
 
+        // iterate over nucleotides in sequence
         for (i, c) in record.seq().iter().enumerate() {
+            let i = i as u32; // convert to u32 for bitmap
             match c.to_ascii_uppercase() {
-                b'A' => a_sites.insert(i as u32),
-                b'C' => c_sites.insert(i as u32),
-                b'G' => g_sites.insert(i as u32),
-                b'T' => t_sites.insert(i as u32),
-                b'M' => {
-                    a_sites.insert(i as u32);
-                    c_sites.insert(i as u32)
+                b'A' => a_sites.insert(i), // A
+                b'C' => c_sites.insert(i), // C
+                b'G' => g_sites.insert(i), // G
+                b'T' => t_sites.insert(i), // T
+                b'M' => { // A or C
+                    a_sites.insert(i);
+                    c_sites.insert(i)
                 }
-                b'R' => {
-                    a_sites.insert(i as u32);
-                    g_sites.insert(i as u32)
+                b'R' => { // A or G
+                    a_sites.insert(i);
+                    g_sites.insert(i)
                 }
-                b'W' => {
-                    a_sites.insert(i as u32);
-                    t_sites.insert(i as u32)
+                b'W' => { // A or T
+                    a_sites.insert(i);
+                    t_sites.insert(i)
                 }
-                b'S' => {
-                    c_sites.insert(i as u32);
-                    g_sites.insert(i as u32)
+                b'S' => { // C or G
+                    c_sites.insert(i);
+                    g_sites.insert(i)
                 }
-                b'Y' => {
-                    c_sites.insert(i as u32);
-                    t_sites.insert(i as u32)
+                b'Y' => { // C or T
+                    c_sites.insert(i);
+                    t_sites.insert(i)
                 }
-                b'K' => {
-                    g_sites.insert(i as u32);
-                    t_sites.insert(i as u32)
+                b'K' => { // G or T
+                    g_sites.insert(i);
+                    t_sites.insert(i)
                 }
-                b'V' => {
-                    a_sites.insert(i as u32);
-                    c_sites.insert(i as u32);
-                    g_sites.insert(i as u32)
+                b'V' => { // A, C, or G
+                    a_sites.insert(i);
+                    c_sites.insert(i);
+                    g_sites.insert(i)
                 }
-                b'H' => {
-                    a_sites.insert(i as u32);
-                    c_sites.insert(i as u32);
-                    t_sites.insert(i as u32)
+                b'H' => { // A, C, or T
+                    a_sites.insert(i);
+                    c_sites.insert(i);
+                    t_sites.insert(i)
                 }
-                b'D' => {
-                    a_sites.insert(i as u32);
-                    g_sites.insert(i as u32);
-                    t_sites.insert(i as u32)
+                b'D' => { // A, G, or T
+                    a_sites.insert(i);
+                    g_sites.insert(i);
+                    t_sites.insert(i)
                 }
-                b'B' => {
-                    c_sites.insert(i as u32);
-                    g_sites.insert(i as u32);
-                    t_sites.insert(i as u32)
+                b'B' => { // C, G, or T
+                    c_sites.insert(i);
+                    g_sites.insert(i);
+                    t_sites.insert(i)
                 }
-                b'N' | b'-' => {
-                    a_sites.insert(i as u32);
-                    c_sites.insert(i as u32);
-                    g_sites.insert(i as u32);
-                    t_sites.insert(i as u32)
+                b'N' | b'-' => { // A, C, G, or T
+                    a_sites.insert(i);
+                    c_sites.insert(i);
+                    g_sites.insert(i);
+                    t_sites.insert(i)
                 }
-                _ => panic!("Invalid character in sequence")
+                _ => panic!("Invalid character in sequence") // invalid character
             };
         }
         a_snps.push(a_sites);
@@ -94,11 +117,11 @@ fn main() {
         nseqs += 1;
     }
 
+    // calculate pairwise SNP distances
     let mut pair_snps = Vec::new();
     for i in 0..nseqs {
-        let mut res;
         for j in i + 1..nseqs {
-            res = &a_snps[i] & &a_snps[j];
+            let mut res = &a_snps[i] & &a_snps[j];
             res |= &c_snps[i] & &c_snps[j];
             res |= &g_snps[i] & &g_snps[j];
             res |= &t_snps[i] & &t_snps[j];
@@ -106,17 +129,21 @@ fn main() {
         }
     }
 
+    // write pairwise SNP distance matrix to output file
+    let mut buffer = BufWriter::new(File::create(args.output)?);
     for i in 0..nseqs {
-        print!("{}", ids[i]);
+        write!(buffer, "{}", ids[i])?;
         for j in 0..nseqs {
             if i == j {
-                print!(" 0");
+                write!(buffer, " 0")?;
             } else if i < j {
-                print!(" {}", pair_snps[(nseqs*(nseqs-1)/2) - (nseqs-i)*((nseqs-i)-1)/2 + j - i - 1]);
+                write!(buffer, " {}", pair_snps[(nseqs*(nseqs-1)/2) - (nseqs-i)*((nseqs-i)-1)/2 + j - i - 1])?;
             } else {
-                print!(" {}", pair_snps[(nseqs*(nseqs-1)/2) - (nseqs-j)*((nseqs-j)-1)/2 + i - j - 1]);
+                write!(buffer, " {}", pair_snps[(nseqs*(nseqs-1)/2) - (nseqs-j)*((nseqs-j)-1)/2 + i - j - 1])?;
             }
         }
-        println!();
+        write!(buffer, "\n")?;
     }
+
+    Ok(())
 }
