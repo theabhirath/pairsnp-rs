@@ -32,7 +32,7 @@ fn main() -> Result<(), std::io::Error> {
     let mut t_snps = Vec::new();
 
     // iterate over records in input FASTA file
-    for record in reader.records() {
+    while let Some(record) = reader.next() {
         let record = record.unwrap();
         let length = record.seq().len() as u32;
         if seq_length == 0 {
@@ -137,9 +137,9 @@ fn main() -> Result<(), std::io::Error> {
             if i == j {
                 write!(buffer, " 0")?;
             } else if i < j {
-                write!(buffer, " {}", pair_snps[(nseqs*(nseqs-1)/2) - (nseqs-i)*((nseqs-i)-1)/2 + j - i - 1])?;
+                write!(buffer, " {}", pair_snps[(2 * nseqs - 3 - i) * i / 2 + j - 1])?;
             } else {
-                write!(buffer, " {}", pair_snps[(nseqs*(nseqs-1)/2) - (nseqs-j)*((nseqs-j)-1)/2 + i - j - 1])?;
+                write!(buffer, " {}", pair_snps[(2 * nseqs - 3 - j) * j / 2 + i - 1])?;
             }
         }
         write!(buffer, "\n")?;

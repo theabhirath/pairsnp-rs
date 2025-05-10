@@ -5,6 +5,12 @@ A Rust implementation for calculating pairwise SNP distance matrices using a mul
 > [!WARNING]
 > This is a work in progress and not yet complete.
 
+## Installation
+
+```bash
+cargo install --git https://github.com/theabhirath/pairsnp-rs.git
+```
+
 ## Input
 
 The input file should be a multiple sequence alignment in fasta format.
