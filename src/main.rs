@@ -459,11 +459,11 @@ mod tests {
             id: "test1".to_string(),
             seq: b"ACGTMRWSYKVHBDN-".to_vec(),
         };
-        ThreadPoolBuilder::new()
+        let pool = ThreadPoolBuilder::new()
             .num_threads(2)
-            .build_global()
+            .build()
             .unwrap();
-        let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(&record);
+        let (a_sites, c_sites, g_sites, t_sites) = pool.install(|| build_nucleotide_bitmaps(&record));
         assert!(a_sites.contains(0)); // A
         assert!(c_sites.contains(1)); // C
         assert!(g_sites.contains(2)); // G
