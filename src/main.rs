@@ -1,8 +1,8 @@
 use std::fs::File;
 use std::io::BufWriter;
 use std::io::prelude::*;
-use clap::Parser;
 
+use clap::Parser;
 use seq_io::fasta::{Reader, Record};
 use roaring::RoaringBitmap;
 use rayon::prelude::*;
@@ -20,10 +20,15 @@ struct Cli {
     /// number of threads for Rayon (defaults to all available)
     #[clap(short = 't', long)]
     nthreads: Option<usize>,
+    /// CSV instead of TSV
+    #[clap(short, long)]
+    csv: bool
 }
 
 fn main() -> Result<(), std::io::Error> {
+    // parse command line arguments
     let args = Cli::parse();
+
     // configure Rayon global thread pool if user requested a specific count
     if let Some(n) = args.nthreads {
         ThreadPoolBuilder::new()
@@ -31,6 +36,7 @@ fn main() -> Result<(), std::io::Error> {
             .build_global()
             .expect("Failed to configure Rayon thread pool");
     }
+
     // read input FASTA file
     let mut reader = Reader::from_path(args.input)?;
 
@@ -56,56 +62,7 @@ fn main() -> Result<(), std::io::Error> {
         ids.push(record.id().unwrap().to_string());
 
         // build nucleotide bitmaps in parallel
-        let (a_sites, c_sites, g_sites, t_sites) = record
-            .seq()
-            .par_iter()
-            .enumerate()
-            .fold(
-                || (
-                    RoaringBitmap::new(),
-                    RoaringBitmap::new(),
-                    RoaringBitmap::new(),
-                    RoaringBitmap::new(),
-                ),
-                |mut acc, (i, &c)| {
-                    let i = i as u32;
-                    match c.to_ascii_uppercase() {
-                        b'A' => acc.0.insert(i), // A
-                        b'C' => acc.1.insert(i), // C
-                        b'G' => acc.2.insert(i), // G
-                        b'T' => acc.3.insert(i), // T
-                        b'M' => { acc.0.insert(i); acc.1.insert(i) } // A or C
-                        b'R' => { acc.0.insert(i); acc.2.insert(i) } // A or G
-                        b'W' => { acc.0.insert(i); acc.3.insert(i) } // A or T
-                        b'S' => { acc.1.insert(i); acc.2.insert(i) } // C or G
-                        b'Y' => { acc.1.insert(i); acc.3.insert(i) } // C or T
-                        b'K' => { acc.2.insert(i); acc.3.insert(i) } // G or T
-                        b'V' => { acc.0.insert(i); acc.1.insert(i); acc.2.insert(i) } // A/C/G
-                        b'H' => { acc.0.insert(i); acc.1.insert(i); acc.3.insert(i) } // A/C/T
-                        b'D' => { acc.0.insert(i); acc.2.insert(i); acc.3.insert(i) } // A/G/T
-                        b'B' => { acc.1.insert(i); acc.2.insert(i); acc.3.insert(i) } // C/G/T
-                        b'N' | b'-' => { acc.0.insert(i); acc.1.insert(i); acc.2.insert(i); acc.3.insert(i) } // any
-                        b'\n' => false, // ignore line feed
-                        _ => panic!("Invalid character, {}, in sequence", c), // invalid character
-                    };
-                    acc
-                },
-            )
-            .reduce(
-                || (
-                    RoaringBitmap::new(),
-                    RoaringBitmap::new(),
-                    RoaringBitmap::new(),
-                    RoaringBitmap::new(),
-                ),
-                |mut acc1, acc2| {
-                    acc1.0 |= acc2.0;
-                    acc1.1 |= acc2.1;
-                    acc1.2 |= acc2.2;
-                    acc1.3 |= acc2.3;
-                    acc1
-                },
-            );
+        let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(&record);
 
         a_snps.push(a_sites);
         c_snps.push(c_sites);
@@ -115,35 +72,90 @@ fn main() -> Result<(), std::io::Error> {
     }
 
     // calculate pairwise SNP distances in parallel (row‑wise)
-    let pair_snps_by_row: Vec<Vec<u32>> = (0..nseqs).into_par_iter()
-        .map(|i| {
-            let mut row = Vec::with_capacity(nseqs - i - 1);
-            for j in i + 1..nseqs {
-                let mut res = &a_snps[i] & &a_snps[j];
-                res |= &c_snps[i] & &c_snps[j];
-                res |= &g_snps[i] & &g_snps[j];
-                res |= &t_snps[i] & &t_snps[j];
-                row.push(seq_length - res.len() as u32);
-            }
-            row
-        })
-        .collect();
+    let pair_snps_by_row: Vec<Vec<u32>> = calculate_pairwise_snp_distances(&a_snps, &c_snps, &g_snps, &t_snps, nseqs, seq_length);
 
     // write pairwise SNP distance matrix to output file
     let mut buffer = BufWriter::new(File::create(args.output)?);
+    write_matrix(&mut buffer, &ids, &pair_snps_by_row, if args.csv { ',' } else { '\t' })?;
+
+    Ok(())
+}
+
+/// Build nucleotide bitmaps in parallel
+fn build_nucleotide_bitmaps<T: Record>(record: &T) -> (RoaringBitmap, RoaringBitmap, RoaringBitmap, RoaringBitmap) {
+    let (a_sites, c_sites, g_sites, t_sites) = record
+        .seq()
+        .par_iter()
+        .enumerate()
+        .fold(
+            || (RoaringBitmap::new(), RoaringBitmap::new(), RoaringBitmap::new(), RoaringBitmap::new()),
+            |mut acc, (i, &c)| {
+                let i = i as u32;
+                match c.to_ascii_uppercase() {
+                    b'A' => acc.0.insert(i), // A
+                    b'C' => acc.1.insert(i), // C
+                    b'G' => acc.2.insert(i), // G
+                    b'T' => acc.3.insert(i), // T
+                    b'M' => { acc.0.insert(i); acc.1.insert(i) } // A or C
+                    b'R' => { acc.0.insert(i); acc.2.insert(i) } // A or G
+                    b'W' => { acc.0.insert(i); acc.3.insert(i) } // A or T
+                    b'S' => { acc.1.insert(i); acc.2.insert(i) } // C or G
+                    b'Y' => { acc.1.insert(i); acc.3.insert(i) } // C or T
+                    b'K' => { acc.2.insert(i); acc.3.insert(i) } // G or T
+                    b'V' => { acc.0.insert(i); acc.1.insert(i); acc.2.insert(i) } // A/C/G
+                    b'H' => { acc.0.insert(i); acc.1.insert(i); acc.3.insert(i) } // A/C/T
+                    b'D' => { acc.0.insert(i); acc.2.insert(i); acc.3.insert(i) } // A/G/T
+                    b'B' => { acc.1.insert(i); acc.2.insert(i); acc.3.insert(i) } // C/G/T
+                    b'N' | b'-' => { acc.0.insert(i); acc.1.insert(i); acc.2.insert(i); acc.3.insert(i) } // any
+                    b'\n' => false, // ignore line feed
+                    _ => panic!("Invalid character, {}, in sequence", c), // invalid character
+                };
+                acc
+            },
+        )
+        .reduce(
+            || (RoaringBitmap::new(), RoaringBitmap::new(), RoaringBitmap::new(), RoaringBitmap::new()),
+            |mut acc1, acc2| {
+                acc1.0 |= acc2.0;
+                acc1.1 |= acc2.1;
+                acc1.2 |= acc2.2;
+                acc1.3 |= acc2.3;
+                acc1
+            },
+        );
+    (a_sites, c_sites, g_sites, t_sites)
+}
+
+/// Calculate pairwise SNP distance matrix
+fn calculate_pairwise_snp_distances(a_snps: &Vec<RoaringBitmap>, c_snps: &Vec<RoaringBitmap>, g_snps: &Vec<RoaringBitmap>, t_snps: &Vec<RoaringBitmap>, nseqs: usize, seq_length: u32) -> Vec<Vec<u32>> {
+    (0..nseqs).into_par_iter().map(|i| {
+        let mut row = Vec::with_capacity(nseqs - i - 1);
+        for j in i + 1..nseqs {
+            let mut res = &a_snps[i] & &a_snps[j];
+            res |= &c_snps[i] & &c_snps[j];
+            res |= &g_snps[i] & &g_snps[j];
+            res |= &t_snps[i] & &t_snps[j];
+            row.push(seq_length - res.len() as u32);
+        }
+        row
+    }).collect()
+}
+
+/// Write pairwise SNP distance matrix to output file
+fn write_matrix(buffer: &mut BufWriter<File>, ids: &Vec<String>, pair_snps_by_row: &Vec<Vec<u32>>, sep: char) -> Result<(), std::io::Error> {
+    let nseqs = ids.len();
     for i in 0..nseqs {
         write!(buffer, "{}", ids[i])?;
         for j in 0..nseqs {
             if i == j {
-                write!(buffer, " 0")?;
+                write!(buffer, "{}{}", sep, 0)?;
             } else if i < j {
-                write!(buffer, " {}", pair_snps[(2 * nseqs - 3 - i) * i / 2 + j - 1])?;
+                write!(buffer, "{}{}", sep, pair_snps_by_row[i][j - i - 1])?;
             } else {
-                write!(buffer, " {}", pair_snps[(2 * nseqs - 3 - j) * j / 2 + i - 1])?;
+                write!(buffer, "{}{}", sep, pair_snps_by_row[j][i - j - 1])?;
             }
         }
-        write!(buffer, "\n")?;
+        writeln!(buffer)?;
     }
-
     Ok(())
 }
