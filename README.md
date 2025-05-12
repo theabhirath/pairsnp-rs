@@ -20,13 +20,13 @@ The output will be a matrix of pairwise SNP distances. By default, this will be 
 
 The tool can be run from the command line as:
 
-```bash
+```console
 pairsnp-rs -i input.fasta > output.txt
 ```
 
 For more information, run `pairsnp-rs --help`.
 
-```bash
+```console
 $ pairsnp-rs --help
 Calculate pairwise SNP distances given a multiple sequence alignment.
 
