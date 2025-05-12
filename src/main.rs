@@ -333,11 +333,6 @@ mod tests {
 
         let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(&record);
 
-        println!("A sites: {:?}", a_sites.iter().collect::<Vec<u32>>());
-        println!("C sites: {:?}", c_sites.iter().collect::<Vec<u32>>());
-        println!("G sites: {:?}", g_sites.iter().collect::<Vec<u32>>());
-        println!("T sites: {:?}", t_sites.iter().collect::<Vec<u32>>());
-
         // Test individual nucleotides
         assert!(a_sites.contains(0)); // A
         assert!(c_sites.contains(1)); // C
