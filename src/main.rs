@@ -5,6 +5,8 @@ use clap::Parser;
 
 use seq_io::fasta::{Reader, Record};
 use roaring::RoaringBitmap;
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -15,10 +17,20 @@ struct Cli {
     /// output file to write pairwise SNP distance matrix
     #[clap(short, long)]
     output: std::path::PathBuf,
+    /// number of threads for Rayon (defaults to all available)
+    #[clap(short = 't', long)]
+    nthreads: Option<usize>,
 }
 
 fn main() -> Result<(), std::io::Error> {
     let args = Cli::parse();
+    // configure Rayon global thread pool if user requested a specific count
+    if let Some(n) = args.nthreads {
+        ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .expect("Failed to configure Rayon thread pool");
+    }
     // read input FASTA file
     let mut reader = Reader::from_path(args.input)?;
 
@@ -43,73 +55,58 @@ fn main() -> Result<(), std::io::Error> {
         // store sequence ID
         ids.push(record.id().unwrap().to_string());
 
-        // initialize bitmaps for each nucleotide
-        let mut a_sites = RoaringBitmap::new();
-        let mut c_sites = RoaringBitmap::new();
-        let mut g_sites = RoaringBitmap::new();
-        let mut t_sites = RoaringBitmap::new();
+        // build nucleotide bitmaps in parallel
+        let (a_sites, c_sites, g_sites, t_sites) = record
+            .seq()
+            .par_iter()
+            .enumerate()
+            .fold(
+                || (
+                    RoaringBitmap::new(),
+                    RoaringBitmap::new(),
+                    RoaringBitmap::new(),
+                    RoaringBitmap::new(),
+                ),
+                |mut acc, (i, &c)| {
+                    let i = i as u32;
+                    match c.to_ascii_uppercase() {
+                        b'A' => acc.0.insert(i), // A
+                        b'C' => acc.1.insert(i), // C
+                        b'G' => acc.2.insert(i), // G
+                        b'T' => acc.3.insert(i), // T
+                        b'M' => { acc.0.insert(i); acc.1.insert(i) } // A or C
+                        b'R' => { acc.0.insert(i); acc.2.insert(i) } // A or G
+                        b'W' => { acc.0.insert(i); acc.3.insert(i) } // A or T
+                        b'S' => { acc.1.insert(i); acc.2.insert(i) } // C or G
+                        b'Y' => { acc.1.insert(i); acc.3.insert(i) } // C or T
+                        b'K' => { acc.2.insert(i); acc.3.insert(i) } // G or T
+                        b'V' => { acc.0.insert(i); acc.1.insert(i); acc.2.insert(i) } // A/C/G
+                        b'H' => { acc.0.insert(i); acc.1.insert(i); acc.3.insert(i) } // A/C/T
+                        b'D' => { acc.0.insert(i); acc.2.insert(i); acc.3.insert(i) } // A/G/T
+                        b'B' => { acc.1.insert(i); acc.2.insert(i); acc.3.insert(i) } // C/G/T
+                        b'N' | b'-' => { acc.0.insert(i); acc.1.insert(i); acc.2.insert(i); acc.3.insert(i) } // any
+                        b'\n' => false, // ignore line feed
+                        _ => panic!("Invalid character, {}, in sequence", c), // invalid character
+                    };
+                    acc
+                },
+            )
+            .reduce(
+                || (
+                    RoaringBitmap::new(),
+                    RoaringBitmap::new(),
+                    RoaringBitmap::new(),
+                    RoaringBitmap::new(),
+                ),
+                |mut acc1, acc2| {
+                    acc1.0 |= acc2.0;
+                    acc1.1 |= acc2.1;
+                    acc1.2 |= acc2.2;
+                    acc1.3 |= acc2.3;
+                    acc1
+                },
+            );
 
-        // iterate over nucleotides in sequence
-        for (i, c) in record.seq().iter().enumerate() {
-            let i = i as u32; // convert to u32 for bitmap
-            match c.to_ascii_uppercase() {
-                b'A' => a_sites.insert(i), // A
-                b'C' => c_sites.insert(i), // C
-                b'G' => g_sites.insert(i), // G
-                b'T' => t_sites.insert(i), // T
-                b'M' => { // A or C
-                    a_sites.insert(i);
-                    c_sites.insert(i)
-                }
-                b'R' => { // A or G
-                    a_sites.insert(i);
-                    g_sites.insert(i)
-                }
-                b'W' => { // A or T
-                    a_sites.insert(i);
-                    t_sites.insert(i)
-                }
-                b'S' => { // C or G
-                    c_sites.insert(i);
-                    g_sites.insert(i)
-                }
-                b'Y' => { // C or T
-                    c_sites.insert(i);
-                    t_sites.insert(i)
-                }
-                b'K' => { // G or T
-                    g_sites.insert(i);
-                    t_sites.insert(i)
-                }
-                b'V' => { // A, C, or G
-                    a_sites.insert(i);
-                    c_sites.insert(i);
-                    g_sites.insert(i)
-                }
-                b'H' => { // A, C, or T
-                    a_sites.insert(i);
-                    c_sites.insert(i);
-                    t_sites.insert(i)
-                }
-                b'D' => { // A, G, or T
-                    a_sites.insert(i);
-                    g_sites.insert(i);
-                    t_sites.insert(i)
-                }
-                b'B' => { // C, G, or T
-                    c_sites.insert(i);
-                    g_sites.insert(i);
-                    t_sites.insert(i)
-                }
-                b'N' | b'-' => { // A, C, G, or T
-                    a_sites.insert(i);
-                    c_sites.insert(i);
-                    g_sites.insert(i);
-                    t_sites.insert(i)
-                }
-                _ => panic!("Invalid character in sequence") // invalid character
-            };
-        }
         a_snps.push(a_sites);
         c_snps.push(c_sites);
         g_snps.push(g_sites);
@@ -117,17 +114,20 @@ fn main() -> Result<(), std::io::Error> {
         nseqs += 1;
     }
 
-    // calculate pairwise SNP distances
-    let mut pair_snps = Vec::new();
-    for i in 0..nseqs {
-        for j in i + 1..nseqs {
-            let mut res = &a_snps[i] & &a_snps[j];
-            res |= &c_snps[i] & &c_snps[j];
-            res |= &g_snps[i] & &g_snps[j];
-            res |= &t_snps[i] & &t_snps[j];
-            pair_snps.push(seq_length - res.len() as u32);
-        }
-    }
+    // calculate pairwise SNP distances in parallel (row‑wise)
+    let pair_snps_by_row: Vec<Vec<u32>> = (0..nseqs).into_par_iter()
+        .map(|i| {
+            let mut row = Vec::with_capacity(nseqs - i - 1);
+            for j in i + 1..nseqs {
+                let mut res = &a_snps[i] & &a_snps[j];
+                res |= &c_snps[i] & &c_snps[j];
+                res |= &g_snps[i] & &g_snps[j];
+                res |= &t_snps[i] & &t_snps[j];
+                row.push(seq_length - res.len() as u32);
+            }
+            row
+        })
+        .collect();
 
     // write pairwise SNP distance matrix to output file
     let mut buffer = BufWriter::new(File::create(args.output)?);
