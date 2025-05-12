@@ -3,6 +3,7 @@ use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
 use seq_io::fasta::{Reader, Record};
+use std::cmp::Ordering;
 use std::fs::File;
 use std::io::BufWriter;
 use std::io::prelude::*;
@@ -220,10 +221,10 @@ fn build_nucleotide_bitmaps<T: Record>(
 
 /// Calculate pairwise SNP distance matrix
 fn calculate_pairwise_snp_distances(
-    a_snps: &Vec<RoaringBitmap>,
-    c_snps: &Vec<RoaringBitmap>,
-    g_snps: &Vec<RoaringBitmap>,
-    t_snps: &Vec<RoaringBitmap>,
+    a_snps: &[RoaringBitmap],
+    c_snps: &[RoaringBitmap],
+    g_snps: &[RoaringBitmap],
+    t_snps: &[RoaringBitmap],
     nseqs: usize,
     seq_length: u64,
 ) -> Vec<Vec<u64>> {
@@ -236,7 +237,7 @@ fn calculate_pairwise_snp_distances(
                 res |= &c_snps[i] & &c_snps[j];
                 res |= &g_snps[i] & &g_snps[j];
                 res |= &t_snps[i] & &t_snps[j];
-                row.push(seq_length - res.len() as u64);
+                row.push(seq_length - res.len());
             }
             row
         })
@@ -246,8 +247,8 @@ fn calculate_pairwise_snp_distances(
 /// Write pairwise SNP distance matrix to output file
 fn write_matrix(
     out: &mut dyn Write,
-    indices: &Vec<String>,
-    pair_snps_by_row: &Vec<Vec<u64>>,
+    indices: &[String],
+    pair_snps_by_row: &[Vec<u64>],
     sep: char,
     sparse: bool,
     threshold: Option<u64>,
@@ -261,9 +262,9 @@ fn write_matrix(
                 if i < j {
                     let threshold = threshold.unwrap_or(u64::MAX);
                     if pair_snps_by_row[i][j - i - 1] <= threshold {
-                        write!(
+                        writeln!(
                             out,
-                            "{},{},{}\n",
+                            "{},{},{}",
                             indices[i],
                             indices[j],
                             pair_snps_by_row[i][j - i - 1]
@@ -276,12 +277,10 @@ fn write_matrix(
         for i in 0..nseqs {
             write!(out, "{}", indices[i])?;
             for j in 0..nseqs {
-                if i == j {
-                    write!(out, "{}{}", sep, 0)?;
-                } else if i < j {
-                    write!(out, "{}{}", sep, pair_snps_by_row[i][j - i - 1])?;
-                } else {
-                    write!(out, "{}{}", sep, pair_snps_by_row[j][i - j - 1])?;
+                match i.cmp(&j) {
+                    Ordering::Equal => write!(out, "{}{}", sep, 0)?,
+                    Ordering::Less => write!(out, "{}{}", sep, pair_snps_by_row[i][j - i - 1])?,
+                    Ordering::Greater => write!(out, "{}{}", sep, pair_snps_by_row[j][i - j - 1])?,
                 }
             }
             writeln!(out)?;
@@ -317,7 +316,12 @@ mod tests {
             self.id.as_bytes()
         }
         fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
-            write!(writer, ">{}\n{}", self.id, String::from_utf8_lossy(&self.seq))
+            write!(
+                writer,
+                ">{}\n{}",
+                self.id,
+                String::from_utf8_lossy(&self.seq)
+            )
         }
         fn write_wrap<W: Write>(&self, writer: W, _width: usize) -> std::io::Result<()> {
             self.write(writer)
@@ -350,8 +354,18 @@ mod tests {
         assert!(a_sites.contains(11) && c_sites.contains(11) && t_sites.contains(11)); // H
         assert!(c_sites.contains(12) && g_sites.contains(12) && t_sites.contains(12)); // B
         assert!(a_sites.contains(13) && g_sites.contains(13) && t_sites.contains(13)); // D
-        assert!(a_sites.contains(14) && c_sites.contains(14) && g_sites.contains(14) && t_sites.contains(14)); // N
-        assert!(a_sites.contains(15) && c_sites.contains(15) && g_sites.contains(15) && t_sites.contains(15)); // -
+        assert!(
+            a_sites.contains(14)
+                && c_sites.contains(14)
+                && g_sites.contains(14)
+                && t_sites.contains(14)
+        ); // N
+        assert!(
+            a_sites.contains(15)
+                && c_sites.contains(15)
+                && g_sites.contains(15)
+                && t_sites.contains(15)
+        ); // -
     }
 
     #[test]
