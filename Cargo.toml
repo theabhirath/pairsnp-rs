@@ -2,7 +2,7 @@
 name = "pairsnp-rs"
 authors = ["Abhirath Anand <theabhirathanand@gmail.com>"]
 description = "Calculate pairwise SNP distances given a multiple sequence alignment."
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 readme = "README.md"
@@ -13,3 +13,4 @@ clap = { version = "4.5.37", features = ["derive"] }
 rayon = "1.10.0"
 roaring = "0.10.12"
 seq_io = "0.3.4"
+flate2 = "1.0.28"

@@ -1,10 +1,12 @@
 use clap::Parser;
+use flate2::read::GzDecoder;
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
 use seq_io::fasta::{Reader, Record};
 use std::cmp::Ordering;
 use std::fs::File;
+use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::prelude::*;
 use std::io::stdout;
@@ -53,8 +55,15 @@ fn main() -> Result<(), std::io::Error> {
         .build_global()
         .expect("Failed to configure Rayon thread pool");
 
-    // read input FASTA file
-    let mut reader = Reader::from_path(args.input)?;
+    // read input FASTA file, handling both regular and gzipped files
+    let file = File::open(&args.input)?;
+    let reader: Box<dyn Read> = if args.input.extension().and_then(|ext| ext.to_str()) == Some("gz")
+    {
+        Box::new(GzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
+    let mut reader = Reader::new(BufReader::new(reader));
 
     // initialize variables
     let mut seq_length = 0;
@@ -459,11 +468,9 @@ mod tests {
             id: "test1".to_string(),
             seq: b"ACGTMRWSYKVHBDN-".to_vec(),
         };
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(2)
-            .build()
-            .unwrap();
-        let (a_sites, c_sites, g_sites, t_sites) = pool.install(|| build_nucleotide_bitmaps(&record));
+        let pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        let (a_sites, c_sites, g_sites, t_sites) =
+            pool.install(|| build_nucleotide_bitmaps(&record));
         assert!(a_sites.contains(0)); // A
         assert!(c_sites.contains(1)); // C
         assert!(g_sites.contains(2)); // G

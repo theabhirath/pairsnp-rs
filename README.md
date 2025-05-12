@@ -13,7 +13,7 @@ cargo install pairsnp-rs
 
 ## Input
 
-The input file should be a multiple sequence alignment in fasta format.
+The input file should be a multiple sequence alignment in FASTA format. The tool will handle both regular and gzipped files.
 
 ## Output
 
