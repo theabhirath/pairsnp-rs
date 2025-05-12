@@ -2,9 +2,6 @@
 
 A Rust implementation for calculating pairwise SNP distance matrices using a multiple sequence alignment. This is heavily inspired by https://github.com/gtonkinhill/pairsnp-cpp and is a project for me to learn Rust.
 
-> [!WARNING]
-> This is a work in progress and not yet complete.
-
 ## Installation
 
 ```bash
@@ -17,12 +14,32 @@ The input file should be a multiple sequence alignment in fasta format.
 
 ## Output
 
-The output will be a matrix of pairwise SNP distances.
+The output will be a matrix of pairwise SNP distances. By default, this will be output to stdout, but can be piped to a file if the user desires or specified using the `-o` flag.
 
 ## Usage
 
+The tool can be run from the command line as:
+
 ```bash
-pairsnp-rs -i input.fasta -o output.txt
+pairsnp-rs -i input.fasta > output.txt
 ```
 
 For more information, run `pairsnp-rs --help`.
+
+```bash
+$ pairsnp-rs --help
+Calculate pairwise SNP distances given a multiple sequence alignment.
+
+Usage: pairsnp-rs [OPTIONS] --input <INPUT>
+
+Options:
+  -i, --input <INPUT>          Input FASTA file containing multiple sequence alignment
+  -o, --output <OUTPUT>        Output file to write pairwise SNP distance matrix (optional)
+  -t, --nthreads <NTHREADS>    Number of threads to use (defaults to 1)
+  -c, --csv                    Output in CSV format instead of TSV
+  -s, --sparse                 Sparse output i.e. only non-zero distances and in s1,s2,dist format
+  -d, --threshold <THRESHOLD>  Distance threshold for sparse output
+  -x, --indices                Output indices instead of sequence IDs
+  -h, --help                   Print help
+  -V, --version                Print version
+```
