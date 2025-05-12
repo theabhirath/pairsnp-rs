@@ -290,3 +290,156 @@ fn write_matrix(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use seq_io::fasta::Record;
+    use std::str::Utf8Error;
+
+    // Helper struct to implement Record trait for testing
+    struct TestRecord {
+        id: String,
+        seq: Vec<u8>,
+    }
+
+    impl Record for TestRecord {
+        fn id(&self) -> Result<&str, Utf8Error> {
+            std::str::from_utf8(self.id.as_bytes()).map_err(|e| e)
+        }
+        fn seq(&self) -> &[u8] {
+            &self.seq
+        }
+        fn desc(&self) -> Option<Result<&str, Utf8Error>> {
+            None
+        }
+        fn head(&self) -> &[u8] {
+            self.id.as_bytes()
+        }
+        fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
+            write!(writer, ">{}\n{}", self.id, String::from_utf8_lossy(&self.seq))
+        }
+        fn write_wrap<W: Write>(&self, writer: W, _width: usize) -> std::io::Result<()> {
+            self.write(writer)
+        }
+    }
+
+    #[test]
+    fn test_build_nucleotide_bitmaps() {
+        let record = TestRecord {
+            id: "test1".to_string(),
+            seq: b"ACGTMRWSYKVHBDN-".to_vec(),
+        };
+
+        let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(&record);
+
+        println!("A sites: {:?}", a_sites.iter().collect::<Vec<u32>>());
+        println!("C sites: {:?}", c_sites.iter().collect::<Vec<u32>>());
+        println!("G sites: {:?}", g_sites.iter().collect::<Vec<u32>>());
+        println!("T sites: {:?}", t_sites.iter().collect::<Vec<u32>>());
+
+        // Test individual nucleotides
+        assert!(a_sites.contains(0)); // A
+        assert!(c_sites.contains(1)); // C
+        assert!(g_sites.contains(2)); // G
+        assert!(t_sites.contains(3)); // T
+
+        // Test combination nucleotides
+        assert!(a_sites.contains(4) && c_sites.contains(4)); // M
+        assert!(a_sites.contains(5) && g_sites.contains(5)); // R
+        assert!(a_sites.contains(6) && t_sites.contains(6)); // W
+        assert!(c_sites.contains(7) && g_sites.contains(7)); // S
+        assert!(c_sites.contains(8) && t_sites.contains(8)); // Y
+        assert!(g_sites.contains(9) && t_sites.contains(9)); // K
+        assert!(a_sites.contains(10) && c_sites.contains(10) && g_sites.contains(10)); // V
+        assert!(a_sites.contains(11) && c_sites.contains(11) && t_sites.contains(11)); // H
+        assert!(c_sites.contains(12) && g_sites.contains(12) && t_sites.contains(12)); // B
+        assert!(a_sites.contains(13) && g_sites.contains(13) && t_sites.contains(13)); // D
+        assert!(a_sites.contains(14) && c_sites.contains(14) && g_sites.contains(14) && t_sites.contains(14)); // N
+        assert!(a_sites.contains(15) && c_sites.contains(15) && g_sites.contains(15) && t_sites.contains(15)); // -
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_build_nucleotide_bitmaps_invalid_char() {
+        let record = TestRecord {
+            id: "test1".to_string(),
+            seq: b"ACGTX".to_vec(), // X is invalid
+        };
+        let _ = build_nucleotide_bitmaps(&record);
+    }
+
+    #[test]
+    fn test_calculate_pairwise_snp_distances() {
+        // Create test sequences
+        let seq1 = TestRecord {
+            id: "seq1".to_string(),
+            seq: b"ACGT".to_vec(),
+        };
+        let seq2 = TestRecord {
+            id: "seq2".to_string(),
+            seq: b"ACCT".to_vec(),
+        };
+        let seq3 = TestRecord {
+            id: "seq3".to_string(),
+            seq: b"AGGT".to_vec(),
+        };
+
+        // Build bitmaps for each sequence
+        let (a1, c1, g1, t1) = build_nucleotide_bitmaps(&seq1);
+        let (a2, c2, g2, t2) = build_nucleotide_bitmaps(&seq2);
+        let (a3, c3, g3, t3) = build_nucleotide_bitmaps(&seq3);
+
+        let a_snps = vec![a1, a2, a3];
+        let c_snps = vec![c1, c2, c3];
+        let g_snps = vec![g1, g2, g3];
+        let t_snps = vec![t1, t2, t3];
+
+        let distances = calculate_pairwise_snp_distances(&a_snps, &c_snps, &g_snps, &t_snps, 3, 4);
+
+        // Verify distances
+        assert_eq!(distances[0][0], 1); // seq1 vs seq2 (1 SNP difference)
+        assert_eq!(distances[0][1], 1); // seq1 vs seq3 (1 SNP difference)
+        assert_eq!(distances[1][0], 2); // seq2 vs seq3 (2 SNP differences)
+    }
+
+    #[test]
+    fn test_write_matrix_dense() {
+        let indices = vec!["seq1".to_string(), "seq2".to_string(), "seq3".to_string()];
+        let distances = vec![vec![1, 1], vec![2]];
+        let mut output = Vec::new();
+
+        write_matrix(&mut output, &indices, &distances, '\t', false, None).unwrap();
+        let output_str = String::from_utf8(output).unwrap();
+
+        let expected = "seq1\t0\t1\t1\nseq2\t1\t0\t2\nseq3\t1\t2\t0\n";
+        assert_eq!(output_str, expected);
+    }
+
+    #[test]
+    fn test_write_matrix_sparse() {
+        let indices = vec!["seq1".to_string(), "seq2".to_string(), "seq3".to_string()];
+        let distances = vec![vec![1, 1], vec![2]];
+        let mut output = Vec::new();
+
+        write_matrix(&mut output, &indices, &distances, ',', true, Some(1)).unwrap();
+        let output_str = String::from_utf8(output).unwrap();
+
+        // Should only output distances <= 1
+        let expected = "seq1,seq2,1\nseq1,seq3,1\n";
+        assert_eq!(output_str, expected);
+    }
+
+    #[test]
+    fn test_write_matrix_with_indices() {
+        let indices = vec!["0".to_string(), "1".to_string(), "2".to_string()];
+        let distances = vec![vec![1, 1], vec![2]];
+        let mut output = Vec::new();
+
+        write_matrix(&mut output, &indices, &distances, '\t', false, None).unwrap();
+        let output_str = String::from_utf8(output).unwrap();
+
+        let expected = "0\t0\t1\t1\n1\t1\t0\t2\n2\t1\t2\t0\n";
+        assert_eq!(output_str, expected);
+    }
+}
