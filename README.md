@@ -1,5 +1,7 @@
 # pairsnp-rs
 
+[![CI](https://github.com/theabhirath/pairsnp-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/theabhirath/pairsnp-rs/actions/workflows/rust.yml)
+
 A Rust implementation for calculating pairwise SNP distance matrices using a multiple sequence alignment. This is heavily inspired by https://github.com/gtonkinhill/pairsnp-cpp and is a project for me to learn Rust.
 
 ## Installation
