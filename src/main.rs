@@ -146,7 +146,7 @@ fn build_nucleotide_bitmaps<T: Record>(
                 )
             },
             |mut acc, (i, &c)| {
-                let i = i as u32;
+                let i = u32::try_from(i).unwrap_or_else(|_| panic!("Index out of range: {i}"));
                 match c.to_ascii_uppercase() {
                     b'A' => acc.0.insert(i), // A
                     b'C' => acc.1.insert(i), // C
@@ -203,7 +203,7 @@ fn build_nucleotide_bitmaps<T: Record>(
                         acc.3.insert(i)
                     } // any
                     b'\n' => false,          // ignore line feed
-                    _ => panic!("Invalid character, {}, in sequence", c), // invalid character
+                    _ => panic!("Invalid character, {c}, in sequence"), // invalid character
                 };
                 acc
             },
@@ -313,7 +313,7 @@ mod tests {
 
     impl Record for TestRecord {
         fn id(&self) -> Result<&str, Utf8Error> {
-            std::str::from_utf8(self.id.as_bytes()).map_err(|e| e)
+            std::str::from_utf8(self.id.as_bytes())
         }
         fn seq(&self) -> &[u8] {
             &self.seq
