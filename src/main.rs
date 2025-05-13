@@ -1,12 +1,10 @@
 use clap::Parser;
-use flate2::read::GzDecoder;
+use needletail::{Sequence, parse_fastx_file};
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
-use seq_io::fasta::{Reader, Record};
 use std::cmp::Ordering;
 use std::fs::File;
-use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::prelude::*;
 use std::io::stdout;
@@ -56,14 +54,7 @@ fn main() -> Result<(), std::io::Error> {
         .expect("Failed to configure Rayon thread pool");
 
     // read input FASTA file, handling both regular and gzipped files
-    let file = File::open(&args.input)?;
-    let reader: Box<dyn Read> = if args.input.extension().and_then(|ext| ext.to_str()) == Some("gz")
-    {
-        Box::new(GzDecoder::new(file))
-    } else {
-        Box::new(file)
-    };
-    let mut reader = Reader::new(BufReader::new(reader));
+    let mut reader = parse_fastx_file(args.input).expect("Error reading input file");
 
     // initialize variables
     let mut seq_length = 0;
@@ -76,19 +67,27 @@ fn main() -> Result<(), std::io::Error> {
 
     // iterate over records in input FASTA file
     while let Some(record) = reader.next() {
-        let record = record.unwrap();
-        let length = record.seq().len() as u64;
+        // read record
+        let record = record.expect("Error reading record.");
+
+        // standardize sequence to uppercase, strip newlines, and trim whitespace
+        let seq = record.normalize(true);
+
+        // get sequence length
+        let length = u64::try_from(seq.len())
+            .unwrap_or_else(|_| panic!("Sequence length too large! {}", seq.len()));
         // check if all sequences have the same length
         if seq_length == 0 {
             seq_length = length;
         } else if length != seq_length {
             panic!("Alignment is not consistent – all sequences must have the same length");
         }
+
         // store sequence ID
-        ids.push(record.id().unwrap().to_string());
+        ids.push(String::from_utf8_lossy(record.id()).to_string());
 
         // build nucleotide bitmaps in parallel
-        let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(&record);
+        let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(seq.sequence());
 
         // store nucleotide bitmaps for each sequence
         a_snps.push(a_sites);
@@ -129,11 +128,10 @@ fn main() -> Result<(), std::io::Error> {
 }
 
 /// Build nucleotide bitmaps in parallel
-fn build_nucleotide_bitmaps<T: Record>(
-    record: &T,
+fn build_nucleotide_bitmaps(
+    seq: &[u8],
 ) -> (RoaringBitmap, RoaringBitmap, RoaringBitmap, RoaringBitmap) {
-    let (a_sites, c_sites, g_sites, t_sites) = record
-        .seq()
+    let (a_sites, c_sites, g_sites, t_sites) = seq
         .par_iter()
         .enumerate()
         .fold(
@@ -147,7 +145,7 @@ fn build_nucleotide_bitmaps<T: Record>(
             },
             |mut acc, (i, &c)| {
                 let i = u32::try_from(i).unwrap_or_else(|_| panic!("Index out of range: {i}"));
-                match c.to_ascii_uppercase() {
+                match c {
                     b'A' => acc.0.insert(i), // A
                     b'C' => acc.1.insert(i), // C
                     b'G' => acc.2.insert(i), // G
@@ -201,8 +199,7 @@ fn build_nucleotide_bitmaps<T: Record>(
                         acc.1.insert(i);
                         acc.2.insert(i);
                         acc.3.insert(i)
-                    } // any
-                    b'\n' => false,          // ignore line feed
+                    } // A/C/G/T
                     _ => panic!("Invalid character, {c}, in sequence"), // invalid character
                 };
                 acc
@@ -241,8 +238,9 @@ fn calculate_pairwise_snp_distances(
         .into_par_iter()
         .map(|i| {
             let mut row = Vec::with_capacity(nseqs - i - 1);
+            let mut res;
             for j in i + 1..nseqs {
-                let mut res = &a_snps[i] & &a_snps[j];
+                res = &a_snps[i] & &a_snps[j];
                 res |= &c_snps[i] & &c_snps[j];
                 res |= &g_snps[i] & &g_snps[j];
                 res |= &t_snps[i] & &t_snps[j];
@@ -262,6 +260,7 @@ fn write_matrix(
     sparse: bool,
     threshold: Option<u64>,
 ) -> Result<(), std::io::Error> {
+    // get number of sequences
     let nseqs = indices.len();
 
     // sparse output is of format s1,s2,dist (<=threshold)
@@ -302,49 +301,11 @@ fn write_matrix(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use seq_io::fasta::Record;
-    use std::str::Utf8Error;
-
-    // Helper struct to implement Record trait for testing
-    struct TestRecord {
-        id: String,
-        seq: Vec<u8>,
-    }
-
-    impl Record for TestRecord {
-        fn id(&self) -> Result<&str, Utf8Error> {
-            std::str::from_utf8(self.id.as_bytes())
-        }
-        fn seq(&self) -> &[u8] {
-            &self.seq
-        }
-        fn desc(&self) -> Option<Result<&str, Utf8Error>> {
-            None
-        }
-        fn head(&self) -> &[u8] {
-            self.id.as_bytes()
-        }
-        fn write<W: Write>(&self, mut writer: W) -> std::io::Result<()> {
-            write!(
-                writer,
-                ">{}\n{}",
-                self.id,
-                String::from_utf8_lossy(&self.seq)
-            )
-        }
-        fn write_wrap<W: Write>(&self, writer: W, _width: usize) -> std::io::Result<()> {
-            self.write(writer)
-        }
-    }
 
     #[test]
     fn test_build_nucleotide_bitmaps() {
-        let record = TestRecord {
-            id: "test1".to_string(),
-            seq: b"ACGTMRWSYKVHBDN-".to_vec(),
-        };
-
-        let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(&record);
+        let seq = b"ACGTMRWSYKVHBDN-";
+        let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(seq);
 
         // Test individual nucleotides
         assert!(a_sites.contains(0)); // A
@@ -380,33 +341,21 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_build_nucleotide_bitmaps_invalid_char() {
-        let record = TestRecord {
-            id: "test1".to_string(),
-            seq: b"ACGTX".to_vec(), // X is invalid
-        };
-        let _ = build_nucleotide_bitmaps(&record);
+        let seq = b"ACGTX"; // X is invalid
+        let _ = build_nucleotide_bitmaps(seq);
     }
 
     #[test]
     fn test_calculate_pairwise_snp_distances() {
         // Create test sequences
-        let seq1 = TestRecord {
-            id: "seq1".to_string(),
-            seq: b"ACGT".to_vec(),
-        };
-        let seq2 = TestRecord {
-            id: "seq2".to_string(),
-            seq: b"ACCT".to_vec(),
-        };
-        let seq3 = TestRecord {
-            id: "seq3".to_string(),
-            seq: b"AGGT".to_vec(),
-        };
+        let seq1 = b"ACGT";
+        let seq2 = b"ACCT";
+        let seq3 = b"AGGT";
 
         // Build bitmaps for each sequence
-        let (a1, c1, g1, t1) = build_nucleotide_bitmaps(&seq1);
-        let (a2, c2, g2, t2) = build_nucleotide_bitmaps(&seq2);
-        let (a3, c3, g3, t3) = build_nucleotide_bitmaps(&seq3);
+        let (a1, c1, g1, t1) = build_nucleotide_bitmaps(seq1);
+        let (a2, c2, g2, t2) = build_nucleotide_bitmaps(seq2);
+        let (a3, c3, g3, t3) = build_nucleotide_bitmaps(seq3);
 
         let a_snps = vec![a1, a2, a3];
         let c_snps = vec![c1, c2, c3];
@@ -464,13 +413,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_parallel_build_nucleotide_bitmaps() {
-        let record = TestRecord {
-            id: "test1".to_string(),
-            seq: b"ACGTMRWSYKVHBDN-".to_vec(),
-        };
+        let seq = b"ACGTMRWSYKVHBDN-";
         let pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let (a_sites, c_sites, g_sites, t_sites) =
-            pool.install(|| build_nucleotide_bitmaps(&record));
+        let (a_sites, c_sites, g_sites, t_sites) = pool.install(|| build_nucleotide_bitmaps(seq));
         assert!(a_sites.contains(0)); // A
         assert!(c_sites.contains(1)); // C
         assert!(g_sites.contains(2)); // G
