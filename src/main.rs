@@ -18,21 +18,24 @@ struct Cli {
     /// Output file to write pairwise SNP distance matrix (optional)
     #[clap(short, long)]
     output: Option<std::path::PathBuf>,
-    /// Number of threads to use (defaults to 1)
+    /// Number of threads to use (optional, defaults to 1)
     #[clap(short = 't', long)]
     nthreads: Option<usize>,
-    /// Output in CSV format instead of TSV
+    /// Output in CSV format instead of TSV (optional, defaults to TSV)
     #[clap(short, long)]
     csv: bool,
-    /// Sparse output i.e. only non-zero distances and in s1,s2,dist format
+    /// Sparse output i.e. only non-zero distances and in s1,s2,dist format (optional, defaults to false)
     #[clap(short, long)]
     sparse: bool,
-    /// Distance threshold for sparse output
+    /// Distance threshold for sparse output (optional, defaults to no threshold)
     #[clap(short = 'd', long)]
     threshold: Option<u64>,
-    /// Output indices instead of sequence IDs
+    /// Output indices instead of sequence IDs (optional, defaults to false)
     #[clap(short = 'x', long)]
     indices: bool,
+    /// Chunk size for parallel processing (optional, defaults to 1024)
+    #[clap(short = 'b', long)]
+    chunk_size: Option<usize>,
 }
 
 fn main() -> Result<(), std::io::Error> {
@@ -57,6 +60,7 @@ fn main() -> Result<(), std::io::Error> {
     let mut reader = parse_fastx_file(args.input).expect("Error reading input file");
 
     // initialize variables
+    let chunk_size = args.chunk_size.unwrap_or(1024);
     let mut seq_length = 0;
     let mut nseqs = 0;
     let mut ids = Vec::new();
@@ -87,7 +91,8 @@ fn main() -> Result<(), std::io::Error> {
         ids.push(String::from_utf8_lossy(record.id()).to_string());
 
         // build nucleotide bitmaps in parallel
-        let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(seq.sequence());
+        let (a_sites, c_sites, g_sites, t_sites) =
+            build_nucleotide_bitmaps(seq.sequence(), chunk_size);
 
         // store nucleotide bitmaps for each sequence
         a_snps.push(a_sites);
@@ -130,9 +135,10 @@ fn main() -> Result<(), std::io::Error> {
 /// Build nucleotide bitmaps in parallel
 fn build_nucleotide_bitmaps(
     seq: &[u8],
+    chunk_size: usize,
 ) -> (RoaringBitmap, RoaringBitmap, RoaringBitmap, RoaringBitmap) {
     let (a_sites, c_sites, g_sites, t_sites) = seq
-        .par_iter()
+        .par_chunks(chunk_size)
         .enumerate()
         .fold(
             || {
@@ -143,65 +149,69 @@ fn build_nucleotide_bitmaps(
                     RoaringBitmap::new(),
                 )
             },
-            |mut acc, (i, &c)| {
-                let i = u32::try_from(i).unwrap_or_else(|_| panic!("Index out of range: {i}"));
-                match c {
-                    b'A' => acc.0.insert(i), // A
-                    b'C' => acc.1.insert(i), // C
-                    b'G' => acc.2.insert(i), // G
-                    b'T' => acc.3.insert(i), // T
-                    b'M' => {
-                        acc.0.insert(i);
-                        acc.1.insert(i)
-                    } // A or C
-                    b'R' => {
-                        acc.0.insert(i);
-                        acc.2.insert(i)
-                    } // A or G
-                    b'W' => {
-                        acc.0.insert(i);
-                        acc.3.insert(i)
-                    } // A or T
-                    b'S' => {
-                        acc.1.insert(i);
-                        acc.2.insert(i)
-                    } // C or G
-                    b'Y' => {
-                        acc.1.insert(i);
-                        acc.3.insert(i)
-                    } // C or T
-                    b'K' => {
-                        acc.2.insert(i);
-                        acc.3.insert(i)
-                    } // G or T
-                    b'V' => {
-                        acc.0.insert(i);
-                        acc.1.insert(i);
-                        acc.2.insert(i)
-                    } // A/C/G
-                    b'H' => {
-                        acc.0.insert(i);
-                        acc.1.insert(i);
-                        acc.3.insert(i)
-                    } // A/C/T
-                    b'D' => {
-                        acc.0.insert(i);
-                        acc.2.insert(i);
-                        acc.3.insert(i)
-                    } // A/G/T
-                    b'B' => {
-                        acc.1.insert(i);
-                        acc.2.insert(i);
-                        acc.3.insert(i)
-                    } // C/G/T
-                    b'N' | b'-' => {
-                        acc.0.insert(i);
-                        acc.1.insert(i);
-                        acc.2.insert(i);
-                        acc.3.insert(i)
-                    } // A/C/G/T
-                    _ => panic!("Invalid character, {c}, in sequence"), // invalid character
-                };
+            |mut acc, (chunk_idx, chunk)| {
+                let chunk_offset = chunk_idx * chunk_size;
+                for (i, &c) in chunk.iter().enumerate() {
+                    let position = u32::try_from(chunk_offset + i)
+                        .unwrap_or_else(|_| panic!("Index out of range: {}", chunk_offset + i));
+                    match c {
+                        b'A' => acc.0.insert(position), // A
+                        b'C' => acc.1.insert(position), // C
+                        b'G' => acc.2.insert(position), // G
+                        b'T' => acc.3.insert(position), // T
+                        b'M' => {
+                            acc.0.insert(position);
+                            acc.1.insert(position)
+                        } // A or C
+                        b'R' => {
+                            acc.0.insert(position);
+                            acc.2.insert(position)
+                        } // A or G
+                        b'W' => {
+                            acc.0.insert(position);
+                            acc.3.insert(position)
+                        } // A or T
+                        b'S' => {
+                            acc.1.insert(position);
+                            acc.2.insert(position)
+                        } // C or G
+                        b'Y' => {
+                            acc.1.insert(position);
+                            acc.3.insert(position)
+                        } // C or T
+                        b'K' => {
+                            acc.2.insert(position);
+                            acc.3.insert(position)
+                        } // G or T
+                        b'V' => {
+                            acc.0.insert(position);
+                            acc.1.insert(position);
+                            acc.2.insert(position)
+                        } // A/C/G
+                        b'H' => {
+                            acc.0.insert(position);
+                            acc.1.insert(position);
+                            acc.3.insert(position)
+                        } // A/C/T
+                        b'D' => {
+                            acc.0.insert(position);
+                            acc.2.insert(position);
+                            acc.3.insert(position)
+                        } // A/G/T
+                        b'B' => {
+                            acc.1.insert(position);
+                            acc.2.insert(position);
+                            acc.3.insert(position)
+                        } // C/G/T
+                        b'N' | b'-' => {
+                            acc.0.insert(position);
+                            acc.1.insert(position);
+                            acc.2.insert(position);
+                            acc.3.insert(position)
+                        } // A/C/G/T
+                        _ => panic!("Invalid character, {c}, in sequence"), // invalid character
+                    };
+                }
                 acc
             },
         )
@@ -238,9 +248,10 @@ fn calculate_pairwise_snp_distances(
         .into_par_iter()
         .map(|i| {
             let mut row = Vec::with_capacity(nseqs - i - 1);
-            let mut res;
+            let mut res = RoaringBitmap::new();
             for j in i + 1..nseqs {
-                res = &a_snps[i] & &a_snps[j];
+                res.clear();
+                res |= &a_snps[i] & &a_snps[j];
                 res |= &c_snps[i] & &c_snps[j];
                 res |= &g_snps[i] & &g_snps[j];
                 res |= &t_snps[i] & &t_snps[j];
@@ -302,10 +313,12 @@ fn write_matrix(
 mod tests {
     use super::*;
 
+    const CHUNK_SIZE: usize = 5;
+
     #[test]
     fn test_build_nucleotide_bitmaps() {
         let seq = b"ACGTMRWSYKVHBDN-";
-        let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(seq);
+        let (a_sites, c_sites, g_sites, t_sites) = build_nucleotide_bitmaps(seq, CHUNK_SIZE);
 
         // Test individual nucleotides
         assert!(a_sites.contains(0)); // A
@@ -342,7 +355,7 @@ mod tests {
     #[should_panic]
     fn test_build_nucleotide_bitmaps_invalid_char() {
         let seq = b"ACGTX"; // X is invalid
-        let _ = build_nucleotide_bitmaps(seq);
+        let _ = build_nucleotide_bitmaps(seq, CHUNK_SIZE);
     }
 
     #[test]
@@ -353,9 +366,9 @@ mod tests {
         let seq3 = b"AGGT";
 
         // Build bitmaps for each sequence
-        let (a1, c1, g1, t1) = build_nucleotide_bitmaps(seq1);
-        let (a2, c2, g2, t2) = build_nucleotide_bitmaps(seq2);
-        let (a3, c3, g3, t3) = build_nucleotide_bitmaps(seq3);
+        let (a1, c1, g1, t1) = build_nucleotide_bitmaps(seq1, CHUNK_SIZE);
+        let (a2, c2, g2, t2) = build_nucleotide_bitmaps(seq2, CHUNK_SIZE);
+        let (a3, c3, g3, t3) = build_nucleotide_bitmaps(seq3, CHUNK_SIZE);
 
         let a_snps = vec![a1, a2, a3];
         let c_snps = vec![c1, c2, c3];
@@ -415,7 +428,8 @@ mod tests {
     fn test_parallel_build_nucleotide_bitmaps() {
         let seq = b"ACGTMRWSYKVHBDN-";
         let pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let (a_sites, c_sites, g_sites, t_sites) = pool.install(|| build_nucleotide_bitmaps(seq));
+        let (a_sites, c_sites, g_sites, t_sites) =
+            pool.install(|| build_nucleotide_bitmaps(seq, CHUNK_SIZE));
         assert!(a_sites.contains(0)); // A
         assert!(c_sites.contains(1)); // C
         assert!(g_sites.contains(2)); // G
