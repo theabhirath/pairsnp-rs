@@ -15,25 +15,25 @@ struct Cli {
     /// Input FASTA file containing multiple sequence alignment
     #[clap(short, long)]
     input: std::path::PathBuf,
-    /// Output file to write pairwise SNP distance matrix (optional)
+    /// Output file to write pairwise SNP distance matrix (optional, writes to stdout if not specified)
     #[clap(short, long)]
     output: Option<std::path::PathBuf>,
-    /// Number of threads to use (optional, defaults to 1)
+    /// Number of threads to use (optional, default is 1)
     #[clap(short = 't', long)]
     nthreads: Option<usize>,
-    /// Output in CSV format instead of TSV (optional, defaults to TSV)
+    /// Output in CSV format instead of TSV (optional, default output is TSV)
     #[clap(short, long)]
     csv: bool,
-    /// Sparse output i.e. only non-zero distances and in s1,s2,dist format (optional, defaults to false)
+    /// Sparse output i.e. only non-zero distances and in s1,s2,dist format (optional, default output is dense)
     #[clap(short, long)]
     sparse: bool,
-    /// Distance threshold for sparse output (optional, defaults to no threshold)
+    /// Distance threshold for sparse output (optional, default is no threshold)
     #[clap(short = 'd', long)]
     threshold: Option<u64>,
-    /// Output indices instead of sequence IDs (optional, defaults to false)
+    /// Output indices instead of sequence IDs (optional, default output is sequence IDs)
     #[clap(short = 'x', long)]
     indices: bool,
-    /// Chunk size for parallel processing (optional, defaults to 1024)
+    /// Chunk size for parallel processing (optional, default is 1024)
     #[clap(short = 'b', long)]
     chunk_size: Option<usize>,
 }

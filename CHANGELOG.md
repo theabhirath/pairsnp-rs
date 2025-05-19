@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/theabhirath/pairsnp-rs/releases/tag/0.2.1) - 2025-05-19
+
+### Changed
+
+- Add a chunking option for building the nucleotide bitmaps so that the parallelization process uses all the CPUs better.
+- There is a new CLI option, `--chunk-size` or `-b`, to allow the user to set this for a better selection than the default.
+- The help text for the CLI was updated to clarify the default behavior of the program.
+
 ## [0.2.0](https://github.com/theabhirath/pairsnp-rs/releases/tag/0.2.0) - 2025-05-13
 
 ### Changed
