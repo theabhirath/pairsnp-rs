@@ -36,13 +36,14 @@ Calculate pairwise SNP distances given a multiple sequence alignment.
 Usage: pairsnp-rs [OPTIONS] --input <INPUT>
 
 Options:
-  -i, --input <INPUT>          Input FASTA file containing multiple sequence alignment
-  -o, --output <OUTPUT>        Output file to write pairwise SNP distance matrix (optional)
-  -t, --nthreads <NTHREADS>    Number of threads to use (defaults to 1)
-  -c, --csv                    Output in CSV format instead of TSV
-  -s, --sparse                 Sparse output i.e. only non-zero distances and in s1,s2,dist format
-  -d, --threshold <THRESHOLD>  Distance threshold for sparse output
-  -x, --indices                Output indices instead of sequence IDs
-  -h, --help                   Print help
-  -V, --version                Print version
+  -i, --input <INPUT>            Input FASTA file containing multiple sequence alignment
+  -o, --output <OUTPUT>          Output file to write pairwise SNP distance matrix (optional, writes to stdout if not specified)
+  -t, --nthreads <NTHREADS>      Number of threads to use (optional, default is 1)
+  -c, --csv                      Output in CSV format instead of TSV (optional, default output is TSV)
+  -s, --sparse                   Sparse output i.e. only non-zero distances and in s1,s2,dist format (optional, default output is dense)
+  -d, --threshold <THRESHOLD>    Distance threshold for sparse output (optional, default is no threshold)
+  -x, --indices                  Output indices instead of sequence IDs (optional, default output is sequence IDs)
+  -b, --chunk-size <CHUNK_SIZE>  Chunk size for parallel processing (optional, default is 1024)
+  -h, --help                     Print help
+  -V, --version                  Print version
 ```
